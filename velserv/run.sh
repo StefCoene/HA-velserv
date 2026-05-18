@@ -2,9 +2,8 @@
 
 DEVICE=$(bashio::config 'device')
 PORT=$(bashio::config 'port')
-ADDRESS=$(bashio::config 'address')
 
-ARGS="-d ${DEVICE} -p ${PORT} -a ${ADDRESS} -f 1"
+ARGS="-d ${DEVICE} -p ${PORT} -f 1"
 
 if bashio::config.true 'verbose'; then
     ARGS="${ARGS} -v"
@@ -15,5 +14,5 @@ if [ ! -e "${DEVICE}" ]; then
     exit 1
 fi
 
-bashio::log.info "Starting VelServ on ${DEVICE}, TCP port ${PORT}, address ${ADDRESS}"
+bashio::log.info "Starting VelServ on ${DEVICE}, TCP port ${PORT}"
 exec /usr/local/bin/velserv ${ARGS}
