@@ -15,4 +15,5 @@ if [ ! -e "${DEVICE}" ]; then
 fi
 
 bashio::log.info "Starting VelServ on ${DEVICE}, TCP port ${PORT}"
+bashio::log.info "Command: /usr/local/bin/velserv ${ARGS}"
 exec /usr/local/bin/velserv ${ARGS}
