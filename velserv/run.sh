@@ -5,11 +5,15 @@ PORT=$(bashio::config 'port')
 
 ARGS="-d ${DEVICE} -p ${PORT} -f 1"
 
+if bashio::config.true 'server_only'; then
+    ARGS="${ARGS} -s"
+fi
+
 if bashio::config.true 'verbose'; then
     ARGS="${ARGS} -v"
 fi
 
-if [ ! -e "${DEVICE}" ]; then
+if ! bashio::config.true 'server_only' && [ ! -e "${DEVICE}" ]; then
     bashio::log.fatal "Device ${DEVICE} not found. Check the 'device' option and make sure the Velbus USB interface is connected."
     exit 1
 fi
