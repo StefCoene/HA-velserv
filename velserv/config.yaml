@@ -1,6 +1,6 @@
 name: "VelServ"
-description: "TCP-to-Velbus gateway — share a single USB Velbus interface over TCP with multiple clients simultaneously (VelbusLink, Home Assistant, OpenHAB, ...)"
-version: "1.6.9"
+description: "TCP-to-Velbus gateway — share a single USB Velbus interface over TCP with multiple clients (VelbusLink, Home Assistant, OpenHAB, ...). Check the addon logs at startup to find the correct device path."
+version: "1.7.1"
 slug: "velserv"
 url: "https://github.com/StefCoene/HA-velserv"
 init: false
@@ -21,14 +21,12 @@ ports:
   3788/tcp: 3788
 
 ports_description:
-  3788/tcp: "Velbus TCP gateway"
+  3788/tcp: "TCP port for Velbus clients — use this port in VelbusLink, Home Assistant, or other Velbus software"
 
 options:
   device: "/dev/ttyACM0"
-  port: 3788
   verbose_level: 0
 
 schema:
   device: str
-  port: int(1024,65535)
   verbose_level: int(0,6)

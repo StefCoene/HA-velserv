@@ -1,10 +1,9 @@
 #!/usr/bin/with-contenv bashio
 
 DEVICE=$(bashio::config 'device')
-PORT=$(bashio::config 'port')
 VERBOSE_LEVEL=$(bashio::config 'verbose_level')
 
-ARGS="-d ${DEVICE} -p ${PORT} -f"
+ARGS="-d ${DEVICE} -p 3788 -f"
 
 for i in $(seq 1 "${VERBOSE_LEVEL}"); do
     ARGS="${ARGS} -v"
@@ -20,6 +19,6 @@ if [ ! -e "${DEVICE}" ]; then
     exit 1
 fi
 
-bashio::log.info "Starting VelServ on ${DEVICE}, TCP port ${PORT} (verbose level ${VERBOSE_LEVEL})"
+bashio::log.info "Starting VelServ on ${DEVICE}, TCP port 3788 (verbose level ${VERBOSE_LEVEL})"
 bashio::log.info "Command: /usr/local/bin/velserv ${ARGS}"
 exec /usr/local/bin/velserv ${ARGS}
