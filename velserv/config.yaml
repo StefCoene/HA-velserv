@@ -1,6 +1,6 @@
 name: "VelServ"
 description: "TCP-to-Velbus gateway — share a single USB Velbus interface over TCP with multiple clients simultaneously (VelbusLink, Home Assistant, OpenHAB, ...)"
-version: "1.6.7"
+version: "1.6.8"
 slug: "velserv"
 url: "https://github.com/StefCoene/HA-velserv"
 init: false
@@ -15,8 +15,13 @@ arch:
 startup: application
 boot: auto
 
-host_network: true
 uart: true
+
+ports:
+  3788/tcp: 3788
+
+ports_description:
+  3788/tcp: "Velbus TCP gateway"
 
 options:
   device: "/dev/ttyACM0"
