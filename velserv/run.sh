@@ -3,7 +3,7 @@
 DEVICE=$(bashio::config 'device')
 PORT=$(bashio::config 'port')
 
-ARGS="-d ${DEVICE} -p ${PORT} -f"
+ARGS="-d ${DEVICE} -p ${PORT} -f 1"
 
 if bashio::config.true 'verbose'; then
     ARGS="${ARGS} -v"
