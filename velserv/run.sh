@@ -10,9 +10,9 @@ if bashio::config.true 'verbose'; then
 fi
 
 if [ ! -e "${DEVICE}" ]; then
-    bashio::log.fatal "Apparaat ${DEVICE} niet gevonden. Controleer de instelling 'device' en of de Velbus USB interface aangesloten is."
+    bashio::log.fatal "Device ${DEVICE} not found. Check the 'device' option and make sure the Velbus USB interface is connected."
     exit 1
 fi
 
-bashio::log.info "VelServ starten op ${DEVICE}, TCP poort ${PORT}"
+bashio::log.info "Starting VelServ on ${DEVICE}, TCP port ${PORT}"
 exec /usr/local/bin/velserv ${ARGS}

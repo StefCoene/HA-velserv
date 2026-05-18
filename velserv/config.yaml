@@ -1,5 +1,5 @@
 name: "VelServ"
-description: "TCP-naar-Velbus gateway — deelt één USB Velbus interface over TCP met meerdere clients tegelijk (VelbusLink, Home Assistant, OpenHAB, …)"
+description: "TCP-to-Velbus gateway — share a single USB Velbus interface over TCP with multiple clients simultaneously (VelbusLink, Home Assistant, OpenHAB, ...)"
 version: "1.6.1"
 slug: "velserv"
 url: "https://github.com/jeroends/velserv"
