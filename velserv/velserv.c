@@ -292,12 +292,21 @@ void *server()
 	/* for setsockopt() SO_REUSEADDR, below */
 	int yes = 1;
 	int addrlen;
-	int i, j, m;
+	int i, j;
 	char *ip_add_arr[100] = {0};
 
-	int pointer,bytes_in_string, status;
+	int pointer,bytes_in_string;
 	//unsigned char message[8];
 	unsigned char buffer[100];
+
+	/* Reassembly of partial Velbus frames across recv() boundaries.
+	   TCP is a byte stream without message boundaries, so a single recv()
+	   may hold a partial frame or several frames. For every client we keep
+	   the trailing bytes that did not yet form a complete frame (a frame is
+	   at most 14 bytes) and prepend them to the next recv() for that client. */
+	unsigned char work[sizeof(buf) + 16];
+	static unsigned char frag[FD_SETSIZE][16];
+	static int fraglen[FD_SETSIZE];
 
 	/* clear the master and temp sets */
 	FD_ZERO(&master);
@@ -430,6 +439,8 @@ void *server()
 						char *ip_add = inet_ntoa(clientaddr.sin_addr);
 						ip_add_arr[newfd]=malloc(strlen(ip_add)+1);
 						strcpy(ip_add_arr[newfd],ip_add);
+						if (newfd < FD_SETSIZE)
+							fraglen[newfd] = 0;   /* start with an empty reassembly buffer */
 					}
 				}
 				else
@@ -459,49 +470,57 @@ void *server()
 						close(i);
 						/* remove from master set */
 						FD_CLR(i, &master);
+						if (i < FD_SETSIZE)
+							fraglen[i] = 0;   /* drop any half-received frame */
 					}
-					else
+					else if (i < FD_SETSIZE)
 					{
-						/* we got some data from a client*/
-						bytes_in_string = 0;
-						status = 0;
+						/* We got some data from a client. Prepend the partial
+						   frame we stored for this client last time, then forward
+						   only complete frames and keep any trailing partial frame
+						   for the next recv(). This carries a frame that arrives
+						   split over several recv() calls, instead of padding the
+						   missing bytes with zeros (the old behaviour that produced
+						   corrupt, unparseable messages downstream). */
+						int flen = fraglen[i];
+						if (flen < 0 || flen > (int)sizeof(frag[0]))
+							flen = 0;   /* safety: a stored remainder never exceeds one frame */
+						memcpy(work, frag[i], flen);
+						memcpy(work + flen, buf, nbytes);
+						int worklen = flen + nbytes;
+
 						if(verbose == 9)
 						{
-							disp_data_full(buf,nbytes);
+							disp_data_full(work, worklen);
 						}
-						for(pointer=0; pointer<= nbytes; pointer++)
+
+						pointer = 0;
+						while (worklen - pointer >= 6)   /* 6 = smallest possible frame */
 						{
-							if ((buf[pointer] == 0xF) && (status == 0))
-							{	
-								status = 1;
-			
-								bytes_in_string = (buf[pointer+3] & 0xF) + 6;
-								memset(&buffer, 0, sizeof(buffer));
-							
-								for(m = 0; m<= bytes_in_string; m++)
-								{
-									buffer[m] = buf[m+pointer];
-								}
-							
-								if (buf[pointer+bytes_in_string-1] == 0x4)
-								{
-									status = 0;
-								}
-								else
-								{
-									if (verbose==5)
-									{
-										fprintf(stderr,"Velserv: framing error \n");
-									}
-									status = 0;
-								}
-							
-								pointer = pointer + bytes_in_string - 1;
+							/* resync: skip anything before a start byte */
+							if (work[pointer] != 0x0F)
+							{
+								pointer++;
+								continue;
+							}
+
+							bytes_in_string = (work[pointer+3] & 0x0F) + 6;
+
+							/* whole frame not received yet -> wait for the next recv() */
+							if (worklen - pointer < bytes_in_string)
+							{
+								break;
+							}
+
+							if (work[pointer+bytes_in_string-1] == 0x04)
+							{
+								/* a complete, well-framed message -> forward it */
+								memcpy(buffer, work + pointer, bytes_in_string);
 
 								for(j = 0; j <= fdmax; j++)
 								{
 									/* send to everyone! */
-									if(FD_ISSET(j, &master)) 
+									if(FD_ISSET(j, &master))
 									{
 										/* except the listener and ourselves */
 										if(j != listener && j != i)
@@ -526,7 +545,32 @@ void *server()
 									fprintf(stdout,"%15s on socket %02i: ",ip_add_arr[i],i);
 									disp_data(buffer,bytes_in_string);
 								}
-							}	
+								pointer += bytes_in_string;
+							}
+							else
+							{
+								/* start byte but wrong end byte -> resync one byte */
+								if (verbose==5)
+								{
+									fprintf(stderr,"Velserv: framing error \n");
+								}
+								pointer++;
+							}
+						}
+
+						/* keep the trailing partial frame (if any) for next time */
+						{
+							int rem = worklen - pointer;
+							/* drop leading garbage so the remainder starts on a frame */
+							while (rem > 0 && work[pointer] != 0x0F)
+							{
+								pointer++;
+								rem--;
+							}
+							if (rem > (int)sizeof(frag[0]))
+								rem = 0;   /* cannot happen: an incomplete frame is < 14 bytes */
+							memcpy(frag[i], work + pointer, rem);
+							fraglen[i] = rem;
 						}
 					}
 				}
