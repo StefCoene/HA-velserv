@@ -170,7 +170,7 @@ void *sock_to_com()
 				fprintf(stdout,"COM <- PC: ");
 				disp_data(buffer,(bytes_in_string+1));
 			}
-			// write the data to the interface and wait for 60000µs
+			// write the data to the interface and wait for 60000us
 			write(fd,buffer,(bytes_in_string+1));
 			usleep(60000);
 		}	
@@ -253,7 +253,7 @@ void *com_to_sock()
 				fprintf(stdout,"COM -> PC: ");
 				disp_data(buffer,(bytes_in_string+1));
 			}
-			// write the data to the interface and wait for 60000µs
+			// write the data to the interface and wait for 60000us
 			send(sock,buffer,(bytes_in_string+1), 0);
 			//usleep(10000);
 		}	
