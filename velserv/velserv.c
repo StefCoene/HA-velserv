@@ -100,7 +100,7 @@ void *sock_to_com()
 {
    unsigned char buffer[100];
    unsigned char recv_data[1];
-   int start_recv = 0, valid, m, bytes_in_string, bytes_recieved;
+   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved;
    char message[8];
    
 	while(1)
@@ -172,6 +172,13 @@ void *sock_to_com()
 			}
 			// write the data to the interface and wait for 60000us
 			write(fd,buffer,(bytes_in_string+1));
+			/* valid is an event ("a frame just completed"), not a state. It has
+			   to be consumed here: the only other assignment back to 0 sits in
+			   the "a new frame starts" branch, which needs an incoming 0x0F.
+			   Without this reset, every byte that is not a frame start falls
+			   through both if-blocks unchanged and re-sends this same buffer,
+			   turning one frame into an endless stream of identical copies. */
+			valid = 0;
 			usleep(60000);
 		}	
 
@@ -183,7 +190,7 @@ void *com_to_sock()
 {
    unsigned char buffer[100];
    unsigned char recv_data[1];
-   int start_recv= 0, valid, m, bytes_in_string, bytes_recieved;
+   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved;
    char message[8];
    
 	while(1)
@@ -255,6 +262,7 @@ void *com_to_sock()
 			}
 			// write the data to the interface and wait for 60000us
 			send(sock,buffer,(bytes_in_string+1), 0);
+			valid = 0;   /* consume the event, see the note in sock_to_com() */
 			//usleep(10000);
 		}	
 
