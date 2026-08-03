@@ -1,6 +1,6 @@
 name: "VelServ"
 description: "TCP-to-Velbus gateway — share a single USB Velbus interface over TCP with multiple clients (VelbusLink, Home Assistant, OpenHAB, ...). Check the addon logs at startup to find the correct device path."
-version: "1.7.3"
+version: "1.7.4"
 slug: "velserv"
 url: "https://github.com/StefCoene/HA-velserv"
 init: false
