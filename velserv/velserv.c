@@ -96,6 +96,62 @@ int disp_data_full(unsigned char*lpData, int nSize)
 }
 
 
+/* Open the bridge socket: the connection over which the serial port reaches
+   the other clients. In the default mode that is velserv connecting to its own
+   listening port, so the interface is just another client in the star. */
+static int bridge_connect(void)
+{
+	struct hostent *host;
+	struct sockaddr_in server_addr;
+	int fd_new;
+
+	host = gethostbyname(IP_ADDRESS);
+	if (host == NULL)
+		return -1;
+
+	if ((fd_new = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+		return -1;
+
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(PORT);
+	server_addr.sin_addr = *((struct in_addr *)host->h_addr);
+	bzero(&(server_addr.sin_zero), 8);
+
+	if (connect(fd_new, (struct sockaddr *)&server_addr, sizeof(struct sockaddr)) == -1)
+	{
+		close(fd_new);
+		return -1;
+	}
+	return fd_new;
+}
+
+/* Rebuild the bridge socket after it broke.
+
+   Neither thread used to look at what recv() and send() returned, so a bridge
+   that went away left velserv listening and accepting clients while nothing
+   reached the bus any more -- connecting still worked, but no traffic passed,
+   and only restarting velserv brought it back. Keep trying: the listening
+   socket lives in the same process, so the far end is coming back. */
+static void bridge_reconnect(const char *why)
+{
+	int fd_new;
+
+	pthread_mutex_lock(&mutex1);
+	if (verbose > 3)
+		fprintf(stderr, "Velserv: bridge socket lost (%s), reconnecting\n", why);
+	close(sock);
+	while ((fd_new = bridge_connect()) == -1)
+	{
+		pthread_mutex_unlock(&mutex1);
+		sleep(1);
+		pthread_mutex_lock(&mutex1);
+	}
+	sock = fd_new;
+	if (verbose > 3)
+		fprintf(stdout, "Velserv: bridge socket reconnected\n");
+	pthread_mutex_unlock(&mutex1);
+}
+
 void *sock_to_com()
 {
    unsigned char buffer[100];
@@ -109,7 +165,20 @@ void *sock_to_com()
 
 	   // wait for data to receive from socket (blocking option)
 	   bytes_recieved=recv(sock,recv_data,1,0);
-	   
+
+	   if (bytes_recieved <= 0)
+	   {
+		   /* A signal is not a broken connection; anything else is. */
+		   if (bytes_recieved < 0 && (errno == EINTR || errno == EAGAIN))
+			   continue;
+		   bridge_reconnect("no data from the bridge");
+		   start_recv = 0;
+		   valid = 0;
+		   m = 0;
+		   bytes_in_string = 0;
+		   continue;
+	   }
+
 	   if (bytes_recieved > 0)
 	   {  // if we got some data
 			if(verbose == 7)
@@ -261,7 +330,10 @@ void *com_to_sock()
 				disp_data(buffer,(bytes_in_string+1));
 			}
 			// write the data to the interface and wait for 60000us
-			send(sock,buffer,(bytes_in_string+1), 0);
+			if (send(sock,buffer,(bytes_in_string+1), 0) == -1)
+			{
+				bridge_reconnect("cannot send to the bridge");
+			}
 			valid = 0;   /* consume the event, see the note in sock_to_com() */
 			//usleep(10000);
 		}	
@@ -851,25 +923,13 @@ signal(SIGPIPE, SIG_IGN);
 		##################################################################################################
 		*/
 
-		host = gethostbyname(IP_ADDRESS);
-		if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
+		if ((sock = bridge_connect()) == -1)
 		{
-            fprintf(stderr,"Velserv: error creating client socket\n");
-            exit(EXIT_FAILURE);
+			fprintf(stderr,"Velserv: error connecting client to server\n");
+			exit(EXIT_FAILURE);
 		}
 
-		server_addr.sin_family = AF_INET;     
-		server_addr.sin_port = htons(PORT);   
-		server_addr.sin_addr = *((struct in_addr *)host->h_addr);
-		bzero(&(server_addr.sin_zero),8); 
 
-		if (connect(sock, (struct sockaddr *)&server_addr,sizeof(struct sockaddr)) == -1) 
-        {
-			fprintf(stderr,"Velserv: error connecting client to server\n");
-            exit(EXIT_FAILURE);
-        }
-        
-     
 		iret1 = pthread_create( &thread1, NULL, sock_to_com, NULL);
 		iret2 = pthread_create( &thread2, NULL, com_to_sock, NULL);
 	}
