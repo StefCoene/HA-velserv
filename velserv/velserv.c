@@ -30,6 +30,9 @@ Thank you */
 #define FALSE 0
 #define TRUE 1
 #define VERSION "1.6"
+/* Frames a client may refuse in a row before it is dropped. A healthy client
+   drains its buffer immediately, so refusing this many means it is gone. */
+#define STALL_LIMIT 20
 
 char *devicename = MODEMDEVICE;
 char *IP_ADDRESS = IP;
@@ -131,12 +134,24 @@ static int bridge_connect(void)
    that went away left velserv listening and accepting clients while nothing
    reached the bus any more -- connecting still worked, but no traffic passed,
    and only restarting velserv brought it back. Keep trying: the listening
-   socket lives in the same process, so the far end is coming back. */
-static void bridge_reconnect(const char *why)
+   socket lives in the same process, so the far end is coming back.
+
+   fd_seen is the socket the caller was using. Both threads share one bridge,
+   so they both notice the same break; without this check the second one would
+   close the healthy socket the first had just made, and the two would keep
+   replacing each other's connection until velserv ran out of file descriptors
+   and stopped accepting clients altogether. */
+static void bridge_reconnect(int fd_seen, const char *why)
 {
 	int fd_new;
 
 	pthread_mutex_lock(&mutex1);
+	if (sock != fd_seen)
+	{
+		/* Another thread already rebuilt it; carry on with what it made. */
+		pthread_mutex_unlock(&mutex1);
+		return;
+	}
 	if (verbose > 3)
 		fprintf(stderr, "Velserv: bridge socket lost (%s), reconnecting\n", why);
 	close(sock);
@@ -156,7 +171,7 @@ void *sock_to_com()
 {
    unsigned char buffer[100];
    unsigned char recv_data[1];
-   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved;
+   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved, fd_used;
    char message[8];
    
 	while(1)
@@ -164,14 +179,15 @@ void *sock_to_com()
 	   memset(&recv_data, 0, sizeof(recv_data)); // clear data buffer
 
 	   // wait for data to receive from socket (blocking option)
-	   bytes_recieved=recv(sock,recv_data,1,0);
+	   fd_used = sock;
+	   bytes_recieved=recv(fd_used,recv_data,1,0);
 
 	   if (bytes_recieved <= 0)
 	   {
 		   /* A signal is not a broken connection; anything else is. */
 		   if (bytes_recieved < 0 && (errno == EINTR || errno == EAGAIN))
 			   continue;
-		   bridge_reconnect("no data from the bridge");
+		   bridge_reconnect(fd_used, "no data from the bridge");
 		   start_recv = 0;
 		   valid = 0;
 		   m = 0;
@@ -259,7 +275,7 @@ void *com_to_sock()
 {
    unsigned char buffer[100];
    unsigned char recv_data[1];
-   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved;
+   int start_recv = 0, valid = 0, m = 0, bytes_in_string = 0, bytes_recieved, fd_used;
    char message[8];
    
 	while(1)
@@ -330,9 +346,10 @@ void *com_to_sock()
 				disp_data(buffer,(bytes_in_string+1));
 			}
 			// write the data to the interface and wait for 60000us
-			if (send(sock,buffer,(bytes_in_string+1), 0) == -1)
+			fd_used = sock;
+			if (send(fd_used,buffer,(bytes_in_string+1), 0) == -1)
 			{
-				bridge_reconnect("cannot send to the bridge");
+				bridge_reconnect(fd_used, "cannot send to the bridge");
 			}
 			valid = 0;   /* consume the event, see the note in sock_to_com() */
 			//usleep(10000);
@@ -387,6 +404,8 @@ void *server()
 	unsigned char work[sizeof(buf) + 16];
 	static unsigned char frag[FD_SETSIZE][16];
 	static int fraglen[FD_SETSIZE];
+	/* consecutive sends refused because a client's buffer is full */
+	static int stalled[FD_SETSIZE];
 
 	/* clear the master and temp sets */
 	FD_ZERO(&master);
@@ -520,7 +539,10 @@ void *server()
 						ip_add_arr[newfd]=malloc(strlen(ip_add)+1);
 						strcpy(ip_add_arr[newfd],ip_add);
 						if (newfd < FD_SETSIZE)
+						{
 							fraglen[newfd] = 0;   /* start with an empty reassembly buffer */
+							stalled[newfd] = 0;
+						}
 					}
 				}
 				else
@@ -551,7 +573,10 @@ void *server()
 						/* remove from master set */
 						FD_CLR(i, &master);
 						if (i < FD_SETSIZE)
+						{
 							fraglen[i] = 0;   /* drop any half-received frame */
+							stalled[i] = 0;
+						}
 					}
 					else if (i < FD_SETSIZE)
 					{
@@ -605,12 +630,36 @@ void *server()
 										/* except the listener and ourselves */
 										if(j != listener && j != i)
 										{
-											if(send(j, buffer, bytes_in_string, 0) == -1)
+											/* MSG_DONTWAIT, never a blocking send. A client that stops reading --
+											   a laptop asleep behind a vpn leaves the connection half open, with
+											   no fin and no rst -- fills its send buffer, and a blocking send()
+											   here would stall this thread. It is the only one, so the whole star
+											   would stop: no frames for anyone and no accept() either, while the
+											   process looks perfectly alive. */
+											if(send(j, buffer, bytes_in_string, MSG_DONTWAIT) == -1)
 											{
 												if (verbose>3)
 												{
 													fprintf(stderr,"Velserv: error sending!\n");
 												}
+												if ((errno == EAGAIN || errno == EWOULDBLOCK)
+												    && j < FD_SETSIZE && ++stalled[j] >= STALL_LIMIT)
+												{
+													/* Wedged for many frames in a row, not a passing
+													   burst. Drop it; it can always connect again. */
+													if (verbose>3)
+													{
+														fprintf(stdout,"Velserv: dropping unresponsive client on socket %d\n", j);
+													}
+													close(j);
+													FD_CLR(j, &master);
+													fraglen[j] = 0;
+													stalled[j] = 0;
+												}
+											}
+											else if (j < FD_SETSIZE)
+											{
+												stalled[j] = 0;
 											}
 										}
 									}
@@ -756,9 +805,7 @@ int main (int argc, char **argv)
    char com_mess[100];
 
    struct termios oldtio, newtio;       //place for old and new port settings for serial port
-   struct hostent *host;
-   struct sockaddr_in server_addr;
-   
+
 
    pthread_t thread1, thread2, thread3;
    int  iret1, iret2, iret3;

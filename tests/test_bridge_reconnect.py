@@ -28,6 +28,7 @@ import pty
 import socket
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 
@@ -142,13 +143,61 @@ def main() -> int:
 
             results += exchange(first, master, "before the break")
 
+            # Break the bridge while the bus is busy. Both threads then hit the
+            # dead socket at the same time, which is what the reconnect has to
+            # survive: one rebuilding while the other still holds the old fd.
+            pumping = threading.Event()
+            pumping.set()
+
+            def pump():
+                while pumping.is_set():
+                    try:
+                        os.write(master, FROM_BUS)
+                    except OSError:
+                        return
+                    time.sleep(0.02)
+
+            pumper = threading.Thread(target=pump, daemon=True)
+            pumper.start()
+
             # What a restart on the other end looks like from here.
             first.close()
 
             second = accept(server, timeout=RECONNECT_TIMEOUT)
+            pumping.clear()
+            pumper.join(timeout=2)
+            if second is not None:
+                # drain whatever the pump produced
+                second.settimeout(0.5)
+                try:
+                    while second.recv(65536):
+                        pass
+                except (TimeoutError, OSError):
+                    pass
             results.append(("velserv rebuilds the bridge on its own", second is not None))
             if second is not None:
                 results += exchange(second, master, "after the break")
+
+                # Both threads share one bridge, so both notice the same break.
+                # If the second one closes what the first has just built, they
+                # keep replacing each other's connection until velserv runs out
+                # of file descriptors and stops accepting anyone -- the bus goes
+                # quiet and even connecting to velserv starts timing out. With
+                # the reconnected bridge held open here, nothing more should
+                # arrive.
+                server.settimeout(1.0)
+                extra = 0
+                deadline = time.time() + 6.0
+                while time.time() < deadline:
+                    try:
+                        spare, _ = server.accept()
+                    except TimeoutError:
+                        continue
+                    extra += 1
+                    spare.close()
+                results.append(
+                    (f"one break gives one reconnect ({extra} unexpected)", extra == 0)
+                )
                 second.close()
 
             results.append(("velserv still running", proc.poll() is None))
