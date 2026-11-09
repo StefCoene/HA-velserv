@@ -284,7 +284,24 @@ void *com_to_sock()
 
 	   // wait for data to receive from comport (blocking option)
 	   bytes_recieved = read(fd,recv_data,1);
-	
+
+	   if (bytes_recieved <= 0)
+	   {
+		   /* A signal is not a broken device; anything else is. */
+		   if (bytes_recieved < 0 && (errno == EINTR || errno == EAGAIN))
+			   continue;
+		   /* The serial device is gone (EIO after a USB hiccup or
+		      re-enumeration) or hung up (EOF). Every further read() fails
+		      the same way at once, so looping here only burns a full core
+		      while nothing reaches the bus -- 2.5 days of that, unnoticed,
+		      in 11/2026. Exit with a failure code instead: the add-on
+		      watchdog restarts velserv, which reopens the device. */
+		   fprintf(stderr, "Velserv: serial device %s %s, exiting so it can be reopened\n",
+				   devicename,
+				   bytes_recieved == 0 ? "hung up (EOF)" : strerror(errno));
+		   exit(EXIT_FAILURE);
+	   }
+
 	   if (bytes_recieved > 0)
 	   {  // if we got some data
 			if(verbose == 8)
@@ -390,7 +407,11 @@ void *server()
 	int yes = 1;
 	int addrlen;
 	int i, j;
-	char *ip_add_arr[100] = {0};
+	/* Peer address per socket, for log lines only. A fixed buffer per fd
+	   instead of a malloc per connection: the malloc was freed only on a clean
+	   hang-up with verbose > 3, so every connection leaked at the default
+	   level, and the old 100-slot array overflowed at socket number 100. */
+	static char ip_add_arr[FD_SETSIZE][INET_ADDRSTRLEN];
 
 	int pointer,bytes_in_string;
 	//unsigned char message[8];
@@ -535,11 +556,10 @@ void *server()
 						{
 							fprintf(stdout,"Velserv: new connection from %s on socket %d\n", inet_ntoa(clientaddr.sin_addr), newfd);
 						}
-						char *ip_add = inet_ntoa(clientaddr.sin_addr);
-						ip_add_arr[newfd]=malloc(strlen(ip_add)+1);
-						strcpy(ip_add_arr[newfd],ip_add);
 						if (newfd < FD_SETSIZE)
 						{
+							snprintf(ip_add_arr[newfd], sizeof(ip_add_arr[newfd]), "%s",
+							         inet_ntoa(clientaddr.sin_addr));
 							fraglen[newfd] = 0;   /* start with an empty reassembly buffer */
 							stalled[newfd] = 0;
 						}
@@ -557,8 +577,8 @@ void *server()
 						{
 							if (verbose>3)
 							{
-								fprintf(stdout,"Velserv: %s on socket %d hung up\n",ip_add_arr[i], i);
-								free(ip_add_arr[i]);
+								fprintf(stdout,"Velserv: %s on socket %d hung up\n",
+								        i < FD_SETSIZE ? ip_add_arr[i] : "?", i);
 							}
 						}
 						else
@@ -705,10 +725,6 @@ void *server()
 				}
 			}
 		}
-	}
-	while (i < sizeof(ip_add_arr))
-	{
-		free(ip_add_arr[i]);
 	}
 }
 

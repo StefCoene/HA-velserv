@@ -31,3 +31,20 @@ python3 tests/test_framing.py
 Requires `gcc` (the test compiles `velserv/velserv.c` itself) and Python 3.9+.
 It starts velserv in server-only mode (`-s`) on port 47880, so no serial device
 is needed. Exit code 0 means all scenarios passed.
+
+## `test_serial_gone.py`
+
+velserv must exit -- not spin -- when the serial device disappears. A pty stands
+in for the VMB1USB; closing its master makes every `read()` fail with `EIO`,
+which is what a vanished `ttyACM` does. Before 1.7.6 `com_to_sock()` ignored
+`read() <= 0` and looped at one full core while passing no traffic (seen in
+production for 2.5 days, 11/2026). The fix exits with a failure code so the
+add-on watchdog restarts velserv and the device is reopened.
+
+## `test_client_leak.py`
+
+100 000 connect/reset cycles against a server-only velserv, comparing RSS before
+and after. Before 1.7.6 every accepted connection leaked its peer-address string
+(~24-28 bytes) unless it hung up cleanly with `verbose > 3`. Takes ~1.5 min.
+Clients reset (`SO_LINGER 0`) rather than close, so no `TIME_WAIT` sockets are
+left on ports the other tests need.
