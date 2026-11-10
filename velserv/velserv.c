@@ -33,6 +33,11 @@ Thank you */
 /* Frames a client may refuse in a row before it is dropped. A healthy client
    drains its buffer immediately, so refusing this many means it is gone. */
 #define STALL_LIMIT 20
+/* A Velbus frame carries at most 8 data bytes, but the length field (byte 3,
+   low nibble) has room for 15. A larger value means the header is corrupt:
+   drop it and resync on the next 0x0F instead of waiting for -- and
+   swallowing -- up to 20 bytes that belong to the frames after it. */
+#define VELBUS_MAX_DATA 8
 
 char *devicename = MODEMDEVICE;
 char *IP_ADDRESS = IP;
@@ -217,6 +222,21 @@ void *sock_to_com()
 				buffer[m] = recv_data[0];
 				if (m == 3)
 				{
+					if ((buffer[3] & 0x0F) > VELBUS_MAX_DATA)
+					{
+						/* Corrupt header, see VELBUS_MAX_DATA. If the
+						   rejected byte is itself 0x0F it may be the start
+						   of the real next frame, so begin one with it. */
+						bytes_in_string = 0;
+						start_recv = (buffer[3] == 0x0F);
+						if (start_recv)
+						{
+							memset(&buffer, 0, sizeof(buffer));
+							buffer[0] = 0x0F;
+							m = 1;
+						}
+						continue;
+					}
 					bytes_in_string = (buffer[3] & 0xF) + 5;
 				}
 					
@@ -324,6 +344,21 @@ void *com_to_sock()
 				buffer[m] = recv_data[0];
 				if (m == 3)
 				{
+					if ((buffer[3] & 0x0F) > VELBUS_MAX_DATA)
+					{
+						/* Corrupt header, see VELBUS_MAX_DATA. If the
+						   rejected byte is itself 0x0F it may be the start
+						   of the real next frame, so begin one with it. */
+						bytes_in_string = 0;
+						start_recv = (buffer[3] == 0x0F);
+						if (start_recv)
+						{
+							memset(&buffer, 0, sizeof(buffer));
+							buffer[0] = 0x0F;
+							m = 1;
+						}
+						continue;
+					}
 					bytes_in_string = (buffer[3] & 0xF) + 5;
 				}
 					
@@ -629,6 +664,11 @@ void *server()
 								continue;
 							}
 
+							if ((work[pointer+3] & 0x0F) > VELBUS_MAX_DATA)
+							{
+								pointer++;   /* corrupt header, see VELBUS_MAX_DATA: resync */
+								continue;
+							}
 							bytes_in_string = (work[pointer+3] & 0x0F) + 6;
 
 							/* whole frame not received yet -> wait for the next recv() */
